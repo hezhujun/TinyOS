@@ -3,6 +3,11 @@ BOCHS_HOME=bochs
 BOCHS_DISK_FILE=hd60M.img
 BOCHS_CONFIG_FILE=bochsrc
 
+SRC_DIR = src
+BUILD_DIR = build
+
+AS = nasm
+
 # 下载并编译 bochs
 $(BOCHS_HOME):
 	./bochs_init.sh
@@ -12,4 +17,14 @@ $(BOCHS_DISK_FILE):
 
 .PHONY: run
 run:
-	$(BOCHS_HOME)/bin/bochs -f $(BOCHS_CONFIG_FILE)
+	$(BOCHS_HOME)/bin/bochs -f $(BOCHS_CONFIG_FILE) -q
+
+# boot 相关
+$(BUILD_DIR)/boot/mbr.bin: $(SRC_DIR)/boot/mbr.asm
+	mkdir -p $(BUILD_DIR)/boot
+	$(AS) $< -o $@
+
+# 写入磁盘
+.PHONY: write_mbr
+write_mbr: $(BOCHS_DISK_FILE) $(BUILD_DIR)/boot/mbr.bin
+	dd if=$(BUILD_DIR)/boot/mbr.bin of=$(BOCHS_DISK_FILE) bs=512 count=1 seek=0 conv=notrunc
