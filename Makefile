@@ -35,4 +35,4 @@ write_mbr: $(BOCHS_DISK_FILE) $(BUILD_DIR)/boot/mbr.bin
 
 .PHONY: write_loader
 write_loader: $(BUILD_DIR)/boot/loader.bin
-	dd if=$(BUILD_DIR)/boot/loader.bin of=$(BOCHS_DISK_FILE) bs=512 count=1 seek=2 conv=notrunc
+	dd if=$(BUILD_DIR)/boot/loader.bin of=$(BOCHS_DISK_FILE) bs=512 count=4 seek=2 conv=notrunc

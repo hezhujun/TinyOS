@@ -60,8 +60,8 @@ section mbr vstart=0x7c00
   mov ax, LOADER_BASE_ADDR
   push ax
   ; 待读取的扇区数
-  mov cx, 0x0001
-  push cx
+  mov ax, LOADER_START_COUNT
+  push ax
   ; 起始扇区 lba 地址
   mov eax, LOADER_START_SECTOR
   push eax
