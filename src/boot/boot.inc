@@ -1,5 +1,6 @@
 ; loader 加载后的地址
 LOADER_BASE_ADDR equ 0x900
+LOADER_CODE_ADDR equ 0x900 + 0x300
 ; 栈顶地址
 LOADER_STACK_TOP equ LOADER_BASE_ADDR
 ; loader 起始扇区 lba 地址

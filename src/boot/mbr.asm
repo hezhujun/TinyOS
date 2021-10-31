@@ -67,7 +67,7 @@ section mbr vstart=0x7c00
   push eax
   call load_disk_16
 
-  jmp LOADER_BASE_ADDR
+  jmp LOADER_CODE_ADDR
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; 加载硬盘数据

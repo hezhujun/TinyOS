@@ -5,7 +5,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 %include "boot.inc"
 section loader vstart=LOADER_BASE_ADDR
-  jmp loader_start
 
 ; 构建 GDT
 GDT_BASE dd 0x0
@@ -40,37 +39,29 @@ SELECTOR_DATA equ (0x2 << 3) + SELECTOR_TI_GDT + SELECTOR_RPL_0
 SELECTOR_STACK equ (0x2 << 3) + SELECTOR_TI_GDT + SELECTOR_RPL_0
 SELECTOR_VIDEO equ (0x3 << 3) + SELECTOR_TI_GDT + SELECTOR_RPL_0
 
+; total_memory_bytes 保持内存容量，以字节为单位
+; 当前偏移 loader.bin 文件头 (4 + 60) * 8 = 0x200 字节
+; loader.bin 的加载地址是 0x900
+; 故 total_memory_bytes 内存中的地址是 0xb00
+total_memory_bytes dd 0
+
 gdt_ptr dw GDT_LIMIT
   dd GDT_BASE
-loadermsg db '2 loader in real.'
 
+; 人工对齐
+; total_memory_bytes 4 + gdt_ptr 6 + ards_buf 244 ards_cnt 2 共 256 字节
+ards_buf times 244 db 0
+ards_cnt dw 0
+
+; 到此处偏移大小是 0x300
 loader_start:
   mov sp, LOADER_STACK_TOP
 
-  ; INT 0x10 功能号 0x13 打印字符串
-  ; 输入：
-  ;   AH: 子功能好 = 0x13
-  ;   BH: 页码
-  ;   BL: 属性（若 AL=0x00 或  0x01）
-  ;   CX: 字符串长度
-  ;   (DH, DL): 坐标（行、列）
-  ;   ES:BP: 字符串长度
-  ;   AL: 显示输出方式
-  ;     0: 字符串只含显示字符，显示属性在 BL 中，显示后，光标位置不变
-  ;     1: 字符串只含显示字符，显示属性在 BL 中，显示后，光标位置改变
-  ;     2: 字符串中含显示字符和显示属性。显示后，光标位置不变
-  ;     3: 字符串中含显示字符和显示属性。显示后，光标位置改变
-  ; 返回：
-  ;   无返回值
-  mov ax, 0
-  mov es, ax
-  mov bp, loadermsg
-  mov cx, 17
-  mov al, 0x01
-  mov bx, 0x001f
-  mov dx, 0x1800
-  mov ah, 0x13
-  int 0x10
+  mov eax, total_memory_bytes
+  push eax
+  call detect_memory
+
+  jmp $
 
   ; 进入保护模式
   ; 1 打开 A20 
@@ -88,6 +79,200 @@ loader_start:
 
   ; 刷新流水线
   jmp dword SELECTOR_CODE:protect_mode_start
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 检测物理内存容量
+; int detect_memory(uint32_t& total_memory_bytes)
+; 成功，返回1
+; 失败，返回0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+detect_memory:
+  push bp
+  mov bp, sp
+
+  mov eax, [bp+4]
+  push eax
+  call detect_memory_e820
+  cmp ax, 1
+  je .detect_memory_end
+
+  call detect_memory_e801
+  cmp ax, 1
+  je .detect_memory_end
+
+  call detect_memory_e88
+
+.detect_memory_end:
+  mov sp, bp
+  pop bp
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 利用 BIOS 中断 0x15 子功能 0xE820 检测物理内存容量
+; int detect_memory_e820(uint32_t& total_memory_bytes)
+; 成功，返回1
+; 失败，返回0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+detect_memory_e820:
+  push bp
+  mov bp, sp
+
+  push ebx
+  push ecx
+  push edx
+  push es
+  push di
+
+  xor ebx, ebx
+  mov di, ards_buf
+  mov ecx, 20
+  mov edx, 0x534d4150
+
+.e820_loop:
+  mov eax, 0xe820
+  int 0x15
+  jc .e820_error
+  inc word [ards_cnt]
+  cmp ebx, 0
+  jz .e820_end
+  add di, cx
+  jmp .e820_loop
+
+.e820_end:
+  ; 找最大可用内存
+  xor ecx, ecx
+  ; ards 个数
+  mov cx, [ards_cnt]
+  ; 用于存放最大内存大小值
+  xor edx, edx
+  mov di, ards_buf
+.find_max_memory:
+  mov eax, [es:di]
+  add eax, [es:di+8]
+  cmp edx, eax
+  jge .next_ards
+  mov edx, eax
+.next_ards:
+  add di, 20
+  loop .find_max_memory
+
+  mov eax, [bp+4]
+  mov [eax], edx
+
+  mov eax, 1
+  jmp .e820_return
+
+.e820_error:
+  mov eax, 0
+  jmp .e820_return
+
+.e820_return:
+  pop di
+  pop es
+  pop edx
+  pop ecx
+  pop ebx
+
+  mov sp, bp
+  pop bp
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 利用 BIOS 中断 0x15 子功能 0xE801 检测物理内存容量
+; int detect_memory_e801(uint32_t& total_memory_bytes)
+; 成功，返回1
+; 失败，返回0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+detect_memory_e801:
+  push bp
+  mov bp, sp
+
+  push ebx
+  push ecx
+  push edx
+
+  mov ax, 0xe801
+  int 0x15
+  jc .e801_error
+
+  xor edx, edx
+  ; 15MB 以下的内存容量，单位为1KB
+  mov cx, 1024
+  mul cx
+  shl edx, 16
+  and eax, 0x0000ffff
+  or edx, eax
+  ; 加上 1MB
+  add edx, 0x100000
+
+  push edx
+  xor eax, eax
+  ; 16MB-4GB的内存容量，单位是64KB
+  mov ax, bx
+  mov ecx, 1024*64
+  mul ecx
+  ; 16MB-4GB范围内的内存大小存放在eax，因为此方法只能测出4GB以内的内存，所以32位eax足够了
+  pop edx
+  add edx, eax
+  
+  mov eax, [bp+4]
+  mov [eax], edx
+  mov eax, 1
+  jmp .e801_return
+
+.e801_error:
+  mov eax, 0
+
+.e801_return:
+  pop edx
+  pop ecx
+  pop ebx
+
+  mov sp, bp
+  pop bp
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 利用 BIOS 中断 0x15 子功能 0x88 检测物理内存容量
+; int detect_memory_e88(uint32_t& total_memory_bytes)
+; 成功，返回1
+; 失败，返回0
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+detect_memory_e88:
+  push bp
+  mov bp, sp
+
+  push ecx
+  push edx
+
+  or eax, eax
+  mov ah, 0x88
+  int 0x15
+  jc .88_error
+  or edx, edx
+  ; ax 记录内存容量，1KB 为单位大小，内存空间 1MB 之上的连续单位数量
+  mov cx, 1024
+  mul cx
+  shl edx, 16
+  or edx, eax
+  add edx, 0x100000
+
+  mov eax, [bp+4]
+  mov [eax], edx
+
+  mov eax, 1
+  jmp .88_return
+
+.88_error:
+  mov eax, 0
+
+.88_return:
+  pop edx
+  pop ecx
+
+  mov sp, bp
+  pop bp
+  ret
 
 [bits 32]
 protect_mode_start:
