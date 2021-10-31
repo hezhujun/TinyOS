@@ -61,8 +61,6 @@ loader_start:
   push eax
   call detect_memory
 
-  jmp $
-
   ; 进入保护模式
   ; 1 打开 A20 
   in al, 0x92
@@ -282,6 +280,14 @@ protect_mode_start:
   mov fs, ax
   mov gs, ax
   mov ss, ax
+
+  mov eax, 0
+  mov ebx, eax
+  mov ecx, eax
+  mov edx, eax
+  mov esi, eax
+  mov edi, eax
+  mov ebp, eax
   
   mov esp, LOADER_STACK_TOP
   mov ax, SELECTOR_VIDEO
@@ -290,3 +296,112 @@ protect_mode_start:
   mov byte [gs:161], 0x0f
 
   jmp $
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 创建页目录和页表
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+setup_page:
+  push ebp
+  mov ebp, esp
+
+  push ebx
+  push ecx
+  push edi
+
+  ; 页目录表内容清0
+  push 4096
+  push 0
+  push PAGE_DIR_TABLE_POS
+  call memset
+  add esp, 12
+
+  ; 设置页目录表0项，768项，1023项
+  ; 0项保证启动分页后，当前的代码可以继续执行
+  ; 768项把当前的低物理地址映射到高位的虚拟地址
+  ; 内核在高位地址上运行
+  ; 1023项使得内核可以访问修改页目录页和页表页
+.create_pde:
+  mov eax, PAGE_DIR_TABLE_POS + 0x1000
+  mov ebx, eax
+  or eax, PG_P_1 | PG_RW_W | PG_US_U
+  mov [PAGE_DIR_TABLE_POS + 0x0], eax
+  mov [PAGE_DIR_TABLE_POS + 4 * 768], eax
+  sub eax, 0x1000
+  mov [PAGE_DIR_TABLE_POS + 0x1000 - 4], eax
+
+  ; 设置第一个页表
+  ; 映射物理内存的前1MB内存，共256项
+  mov ecx, 256
+  mov eax, 0
+  mov edi, 0
+  or eax, PG_P_1 | PG_RW_W | PG_US_U
+.create_pte:
+  mov [ebx+edi], eax
+  add edi, 4
+  add eax, 0x1000
+  loop .create_pte
+  ; 剩余的页表项清0
+  push (1024 - 256) * 4
+  push 0
+  add ebx, edi
+  push ebx
+  call memset
+  add esp, 12
+
+  ; 设置页目录表 769-1022项
+  ; 这些页目录表项映射高地址空间
+  ; 所有进程共享这些高地址空间
+  mov eax, PAGE_DIR_TABLE_POS
+  add eax, 0x2000
+  or eax, PG_US_U | PG_RW_W | PG_P_1
+  mov ebx, PAGE_DIR_TABLE_POS
+  mov ecx, 254
+  mov edi, 769
+.create_kernel_pde:
+  mov [ebx+edi*4], eax
+  inc edi
+  add eax, 0x1000
+  loop .create_kernel_pde
+
+  ; 清理页目录表 769-1022项所指向的页表
+  mov eax, PAGE_DIR_TABLE_POS
+  add eax, 0x2000
+  push 4096 * 254
+  push 0
+  push eax
+  call memset
+
+  pop edi
+  pop ecx
+  pop ebx
+
+  mov esp, ebp
+  pop ebp
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void *memset(void *str, uint8_t c, uint32_t n)
+; 用 c 填充 str 指向的大小为 n 的内存块
+; 只使用 c 的低8位作为填充物，即把 c 当成字符
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+memset:
+  push ebp
+  mov ebp, esp
+  push edi
+  push ebx
+
+  mov ecx, [ebp+16]
+  mov edi, 0
+  mov eax, [ebp+12]
+  mov ebx, [ebp+8]
+.memset_loop:
+  mov [ebx+edi], al
+  inc edi
+  loop .memset_loop
+
+  pop ebx
+  pop edi
+  mov esp, ebp
+  pop ebp
+
+  ret

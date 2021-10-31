@@ -65,3 +65,12 @@ SELECTOR_RPL_3 equ 11b
 ; Table Indicator 描述符表索引
 SELECTOR_TI_GDT equ 000b
 SELECTOR_TI_LDT equ 000b
+
+; 页目录表位置和页项属性
+PAGE_DIR_TABLE_POS equ 0x100000
+PG_P_0 equ 0
+PG_P_1 equ 1
+PG_RW_R equ 00b
+PG_RW_W equ 10b
+PG_US_S equ 000b
+PG_US_U equ 100b
