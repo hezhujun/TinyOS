@@ -296,6 +296,14 @@ protect_mode_start:
   mov byte [gs:161], 0x0f
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 加载内核
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  push KERNEL_BIN_BASE_ADDR
+  push KERNEL_SECTOR_COUNT
+  push KERNEL_START_SECTOR
+  call load_disk_32
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; 启动内存分页机制
 ; 1 准备好页目录表和页表
 ; 2 将页表地址写入控制寄存器 CR3
@@ -332,8 +340,31 @@ protect_mode_start:
   lgdt [gdt_ptr]
 
   mov byte [gs:160], 'V'
+  jmp SELECTOR_CODE:enter_kernel
 
-  jmp $
+enter_kernel:
+  call kernel_init
+
+  ; 寄存器重新初始化
+  mov ax, SELECTOR_DATA
+  mov ds, ax
+  mov ss, ax
+  mov es, ax
+  mov fs, ax
+  mov gs, ax
+
+  mov eax, 0
+  mov ebx, eax
+  mov ecx, eax
+  mov edx, eax
+  mov esi, eax
+  mov edi, eax
+  mov ebp, eax
+
+  ; 栈地址在物理地址1MB的顶部
+  ; 内核代码不会很多，不会和栈空间冲突
+  mov esp, 0xc009f000
+  jmp KERNEL_ENTRY_POINT
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; 创建页目录和页表
@@ -439,6 +470,156 @@ memset:
 
   pop ebx
   pop edi
+  mov esp, ebp
+  pop ebp
+
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 加载硬盘数据
+; 把从 sector_index 开始的 count 个扇区的内容加载到 address
+; void load_disk(uint32_t sector_index, uint32_t count, void* address)
+; 使用LBA28地址，sector_index 28位，扇区从0开始编号
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+load_disk_32:
+  push ebp
+  mov ebp, esp
+  push ecx
+  push edx
+  push edi
+
+  ; 设置 count register
+  mov eax, [ebp+12]
+  mov dx, 0x1f2
+  out dx, al
+
+  ; 设置扇区起始地址
+  mov eax, [ebp+8]
+  mov dx, 0x1f3
+  out dx, al
+  mov dx, 0x1f4
+  shr eax, 8
+  out dx, al
+  mov dx, 0x1f5
+  shr eax, 8
+  out dx, al
+  mov dx, 0x1f6
+  shr eax, 8
+  or al, 0xe0
+  out dx, al
+
+  ; 设置command register，设置读命令
+  mov dx, 0x1f7
+  mov al, 0x20
+  out dx, al
+
+.wait:
+  nop
+  in al, dx
+  and al, 0x88
+  cmp al, 0x08
+  jnz .wait
+
+  mov eax, [ebp+12]
+  mov cx, 512
+  mul cx
+  shl edx, 16
+  mov dx, ax
+  mov ecx, edx
+  shr ecx, 1
+
+  cld
+  mov edi, [ebp+16]
+  mov dx, 0x1f0
+  rep insw
+
+  pop edi
+  pop edx
+  pop ecx
+  mov esp, ebp
+  pop ebp
+
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; 解析kernel.bin的内容
+; 把代码段segment拷贝到实际运行所在的地址
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+kernel_init:
+  push ebp
+  mov ebp, esp
+  push ebx
+  push ecx
+  push edx 
+
+  xor eax, eax
+  ; 记录程序头表地址
+  xor ebx, ebx
+  ; cx 记录程序头表的 program header 数量
+  xor ecx, ecx
+  ; dx 记录 program header 尺寸
+  xor edx, edx
+
+  ; 读取 e_phentsize
+  mov dx, [KERNEL_BIN_BASE_ADDR + 42]
+  ; 读取 e_phoff
+  mov ebx, [KERNEL_BIN_BASE_ADDR + 28]
+  ; 第一个 program header 的内存地址
+  add ebx, KERNEL_BIN_BASE_ADDR
+  ; 读取 e_phnum
+  mov cx, [KERNEL_BIN_BASE_ADDR + 44]
+
+.each_segment:
+  ; 此 program header 是否未使用
+  cmp byte [ebx + 0], PT_NULL
+  je .PTNULL
+  push ecx
+  ; 读取 p_filesz, 压入 size
+  push dword [ebx + 16]
+  mov eax, [ebx + 4]
+  add eax, KERNEL_BIN_BASE_ADDR
+  ; 压入 src
+  push eax
+  ; 读取 p_vaddr, 压入 dst
+  push dword [ebx + 8]
+  call memcpy
+  ; 清理栈中压入的三个参数
+  add esp, 12
+  pop ecx
+.PTNULL:
+.PTPHDR:
+  ; edx 是 program header 大小，使 ebx 指向下一个 program header
+  add ebx, edx
+  loop .each_segment
+
+  pop edx
+  pop ecx
+  pop ebx
+  mov esp, ebp
+  pop ebp
+
+  ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; void memcpy(void *dest, void *src, uint32_t n)
+; 内存段拷贝
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+memcpy:
+  push ebp
+  mov ebp, esp
+  push ecx
+  push edi
+  push esi
+
+  cld
+  mov edi, [ebp + 8]
+  mov esi, [ebp + 12]
+  mov ecx, [ebp + 16]
+  rep movsb
+
+  pop esi
+  pop edi
+  pop ecx
   mov esp, ebp
   pop ebp
 

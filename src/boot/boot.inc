@@ -74,3 +74,14 @@ PG_RW_R equ 00b
 PG_RW_W equ 10b
 PG_US_S equ 000b
 PG_US_U equ 100b
+
+; kernel.bin所在扇区号
+KERNEL_START_SECTOR equ 9
+; 从磁盘读出后写入的地址
+KERNEL_BIN_BASE_ADDR equ 0x70000
+; 读取的扇区数
+KERNEL_SECTOR_COUNT equ 200
+; 内核运行起始地址
+KERNEL_ENTRY_POINT equ 0xc0001500
+; program header type 忽略类型
+PT_NULL equ 0

@@ -2,11 +2,18 @@ BOCHS_SOURCE_DIR=bochs-2.6.2
 BOCHS_HOME=bochs
 BOCHS_DISK_FILE=hd60M.img
 BOCHS_CONFIG_FILE=bochsrc
+ENTRY_POINT = 0xc0001500
 
 SRC_DIR = src
 BUILD_DIR = build
 
 AS = nasm
+CC = gcc
+LD = ld
+ASFLAGS = -g -f elf
+CFLAGS = -m32 -O0 -Wall -fno-pie -c
+LDFLAGS = -m elf_i386 -Ttext $(ENTRY_POINT) -e main
+OBJS = $(BUILD_DIR)/kernel/main.o
 
 # 下载并编译 bochs
 $(BOCHS_HOME):
@@ -36,3 +43,28 @@ write_mbr: $(BOCHS_DISK_FILE) $(BUILD_DIR)/boot/mbr.bin
 .PHONY: write_loader
 write_loader: $(BUILD_DIR)/boot/loader.bin
 	dd if=$(BUILD_DIR)/boot/loader.bin of=$(BOCHS_DISK_FILE) bs=512 count=4 seek=2 conv=notrunc
+
+.PHONY: write_kernel
+write_kernel: $(BUILD_DIR)/kernel/kernel.bin
+	dd if=$(BUILD_DIR)/kernel/kernel.bin of=$(BOCHS_DISK_FILE) bs=512 count=200 seek=9 conv=notrunc
+
+# C 代码编译
+$(BUILD_DIR)/kernel/main.o: $(SRC_DIR)/kernel/main.c
+	mkdir -p $(BUILD_DIR)/kernel
+	$(CC) $(CFLAGS) $< -o $@
+	objcopy --remove-section .note.gnu.property $@
+
+$(BUILD_DIR)/kernel/main.s: $(SRC_DIR)/kernel/main.c
+	mkdir -p $(BUILD_DIR)/kernel
+	$(CC) -m32 -Wall -fno-builtin -S $< -o $@
+
+# 链接
+$(BUILD_DIR)/kernel/kernel.bin: $(OBJS)
+	$(LD) $(LDFLAGS) $^ -o $@
+
+.PHONY: clean
+clean:
+	rm -rf $(BUILD_DIR)
+
+.PHONY: debug
+debug: clean write_mbr write_loader $(BUILD_DIR)/kernel/kernel.bin write_kernel run
