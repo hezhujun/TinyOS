@@ -78,10 +78,7 @@ section mbr vstart=0x7c00
 load_disk_16:
   push bp
   mov bp, sp
-  push eax
   push ebx
-  push ecx
-  push edx
 
   ; 当前栈的内容 
   ; 
@@ -162,10 +159,7 @@ load_disk_16:
   add bx, 2
   loop .read_loop
 
-  pop edx
-  pop ecx
   pop ebx
-  pop eax
 
   mov sp, bp
   pop bp
