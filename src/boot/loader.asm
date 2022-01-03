@@ -60,6 +60,7 @@ loader_start:
   mov eax, total_memory_bytes
   push eax
   call detect_memory
+  add esp, 4
 
   ; 进入保护模式
   ; 1 打开 A20 
@@ -116,8 +117,6 @@ detect_memory_e820:
   mov bp, sp
 
   push ebx
-  push ecx
-  push edx
   push es
   push di
 
@@ -167,8 +166,6 @@ detect_memory_e820:
 .e820_return:
   pop di
   pop es
-  pop edx
-  pop ecx
   pop ebx
 
   mov sp, bp
@@ -186,8 +183,6 @@ detect_memory_e801:
   mov bp, sp
 
   push ebx
-  push ecx
-  push edx
 
   mov ax, 0xe801
   int 0x15
@@ -222,8 +217,6 @@ detect_memory_e801:
   mov eax, 0
 
 .e801_return:
-  pop edx
-  pop ecx
   pop ebx
 
   mov sp, bp
@@ -239,9 +232,6 @@ detect_memory_e801:
 detect_memory_e88:
   push bp
   mov bp, sp
-
-  push ecx
-  push edx
 
   or eax, eax
   mov ah, 0x88
@@ -265,9 +255,6 @@ detect_memory_e88:
   mov eax, 0
 
 .88_return:
-  pop edx
-  pop ecx
-
   mov sp, bp
   pop bp
   ret
@@ -302,6 +289,7 @@ protect_mode_start:
   push KERNEL_SECTOR_COUNT
   push KERNEL_START_SECTOR
   call load_disk_32
+  add esp, 12
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; 启动内存分页机制
@@ -374,15 +362,20 @@ setup_page:
   mov ebp, esp
 
   push ebx
-  push ecx
   push edi
 
+  push eax
+  push ecx
+  push edx
   ; 页目录表内容清0
   push 4096
   push 0
   push PAGE_DIR_TABLE_POS
   call memset
   add esp, 12
+  pop edx
+  pop ecx
+  pop eax
 
   ; 设置页目录表0项，768项，1023项
   ; 0项保证启动分页后，当前的代码可以继续执行
@@ -409,6 +402,9 @@ setup_page:
   add edi, 4
   add eax, 0x1000
   loop .create_pte
+  push eax
+  push ecx
+  push edx
   ; 剩余的页表项清0
   push (1024 - 256) * 4
   push 0
@@ -416,6 +412,9 @@ setup_page:
   push ebx
   call memset
   add esp, 12
+  pop edx
+  pop ecx
+  pop eax
 
   ; 设置页目录表 769-1022项
   ; 这些页目录表项映射高地址空间
@@ -435,13 +434,19 @@ setup_page:
   ; 清理页目录表 769-1022项所指向的页表
   mov eax, PAGE_DIR_TABLE_POS
   add eax, 0x2000
+  push eax
+  push ecx
+  push edx
   push 4096 * 254
   push 0
   push eax
   call memset
+  add esp, 12
+  pop edx
+  pop ecx
+  pop eax
 
   pop edi
-  pop ecx
   pop ebx
 
   mov esp, ebp
@@ -484,8 +489,6 @@ memset:
 load_disk_32:
   push ebp
   mov ebp, esp
-  push ecx
-  push edx
   push edi
 
   ; 设置 count register
@@ -534,8 +537,6 @@ load_disk_32:
   rep insw
 
   pop edi
-  pop edx
-  pop ecx
   mov esp, ebp
   pop ebp
 
@@ -549,8 +550,6 @@ kernel_init:
   push ebp
   mov ebp, esp
   push ebx
-  push ecx
-  push edx 
 
   xor eax, eax
   ; 记录程序头表地址
@@ -592,8 +591,6 @@ kernel_init:
   add ebx, edx
   loop .each_segment
 
-  pop edx
-  pop ecx
   pop ebx
   mov esp, ebp
   pop ebp
@@ -607,7 +604,6 @@ kernel_init:
 memcpy:
   push ebp
   mov ebp, esp
-  push ecx
   push edi
   push esi
 
@@ -619,7 +615,6 @@ memcpy:
 
   pop esi
   pop edi
-  pop ecx
   mov esp, ebp
   pop ebp
 
